@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>North Star Side Quest</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<style>
+:root {
+  --bg:#020817;--accent:#f5f5f5;--muted:#9ca3af;--accent-soft:#f97316;
+  --border:rgba(249,250,251,.12);--radius-lg:18px;--radius-sm:10px;
+  --transition:.25s ease;--font-main:system-ui,-apple-system,BlinkMacSystemFont,sans-serif;
+  --shadow-soft:0 18px 45px rgba(15,23,42,.45);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  font-family:var(--font-main);
+  background:radial-gradient(circle at top,#111827 0,#020817 42%,#000 100%);
+  color:var(--accent);min-height:100vh;display:flex;align-items:center;
+  justify-content:center;padding:20px;overflow-x:hidden;
+}
+.wrap{position:relative;width:100%;max-width:480px}
+#stars-canvas{position:fixed;inset:0;z-index:-1;pointer-events:none;touch-action:none}
+.card{
+  background:rgba(9,9,15,.96);border-radius:var(--radius-lg);
+  padding:22px 18px 18px;border:1px solid var(--border);
+  box-shadow:var(--shadow-soft);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+}
+.label{font-size:.7rem;text-transform:uppercase;letter-spacing:.14em;color:var(--muted);margin-bottom:4px}
+h1{font-size:1.4rem;font-weight:600;margin-bottom:6px;line-height:1.35}
+.subtitle{font-size:.82rem;color:var(--muted);margin-bottom:14px;line-height:1.5}
+.choices{display:grid;gap:8px;margin:12px 0 10px}
+.choice-btn{
+  border:1px solid rgba(148,163,253,.12);background:rgba(15,23,42,.96);
+  color:var(--accent);padding:9px 11px;border-radius:var(--radius-sm);
+  font-size:.8rem;text-align:left;cursor:pointer;display:flex;justify-content:space-between;
+  align-items:center;gap:8px;transition:transform .15s ease,border-color .15s ease,box-shadow .15s ease;
+  will-change: transform;
+}
+.choice-btn:hover{
+  transform:translateY(-1px);border-color:rgba(249,115,22,.6);
+  box-shadow:0 10px 30px rgba(15,23,42,.5);
+}
+.choice-btn.selected{
+  border-color:var(--accent-soft);
+  box-shadow:0 0 18px rgba(249,115,22,.35);
+  background:radial-gradient(circle at top left,rgba(249,115,22,.12),rgba(9,9,15,1));
+}
+.primary{
+  width:100%;margin-top:8px;padding:10px 14px;border-radius:999px;border:none;
+  font-size:.82rem;font-weight:500;cursor:pointer;display:inline-flex;
+  align-items:center;justify-content:center;gap:6px;
+  background:linear-gradient(to right,#f97316,#fb923c);color:#020817;
+  box-shadow:0 14px 40px rgba(249,115,22,.45);transition:transform .15s ease,box-shadow .15s ease;
+  will-change: transform;
+}
+.primary:hover{transform:translateY(-1px);box-shadow:0 18px 50px rgba(249,115,22,.55)}
+.primary:disabled{opacity:.35;box-shadow:none;cursor:default;transform:none}
+.step-indicator{font-size:.62rem;color:var(--muted);margin-top:4px;text-align:right}
+.tease{font-size:.65rem;color:var(--muted);margin-top:6px;opacity:.85}
+.final-message{margin-top:12px;font-size:.86rem;line-height:1.6;color:var(--accent)}
+.final-message strong{color:var(--accent-soft);font-weight:500}
+.tagline{margin-top:10px;font-size:.7rem;color:var(--muted)}
+.tiny{font-size:.6rem;color:var(--muted);margin-top:4px}
+
+/* Respect reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .choice-btn:hover, .primary:hover { transform:none; box-shadow:none }
+}
+
+/* Small top-right controls */
+.controls {
+  position: fixed; top: 10px; right: 10px; z-index: 3;
+  display: flex; gap: 8px; align-items: center;
+}
+.ctrl {
+  font-size: .7rem; color: var(--muted); border:1px solid var(--border);
+  background: rgba(9,9,15,.8); border-radius: 999px; padding: 6px 10px; cursor: pointer;
+}
+.ctrl[aria-pressed="true"] { color:#111827; background:#e5e7eb }
+</style>
+</head>
+<body>
+<canvas id="stars-canvas" aria-hidden="true"></canvas>
+
+<!-- simple UX controls -->
+<div class="controls">
+  <button class="ctrl" id="toggle-motion" aria-pressed="false" title="Reduce Motion">Reduce Motion</button>
+  <button class="ctrl" id="pause-bg" aria-pressed="false" title="Pause Background">Pause BG</button>
+</div>
+
+<div class="wrap">
+  <div class="card" id="card">
+    <div class="label">A tiny Christmas side quest</div>
+    <h1>Find your North Star.</h1>
+    <div class="subtitle" id="subtitle">
+      Three choices. One quiet orbit. Every path finds its way back to you. ✨
+    </div>
+    <div id="step-container"></div>
+    <button class="primary" id="next-btn">Begin <span aria-hidden="true">➜</span></button>
+    <div class="step-indicator" id="step-indicator"></div>
+    <div class="tease" id="tease"></div>
+  </div>
+</div>
+
+<script>
+/*** ===== CONFIG ===== ***/
+const HER_NAME="you";       // how it appears in “Merry Christmas, ____”
+const FROM_NAME="D";        // your signature
+const TEASE_MODE=true;      // set false for zero teasing
+const TARGET_FPS=45;        // target frame rate for the starfield
+const MAX_CANVAS_STARS=140; // absolute cap for stars (protect low-end)
+// Easter egg toggles
+const EASTER_EGG_CONSOLE = true;
+const EASTER_EGG_WHISPER = true;
+
+/*** ===== GAME STATE ===== ***/
+let step=0;
+const selections={setting:null,role:null,star:null};
+const steps=[
+  {key:"setting",title:"Choose tonight’s world.",subtitle:"Where do we quietly park Christmas for a moment?",options:[
+    {id:"rooftop",title:"Snowlit Rooftops",label:"soft chaos",desc:"City asleep, fairy lights awake, hot chocolate illegally upgraded."},
+    {id:"studio",title:"Hidden Studio",label:"steady glow",desc:"Closed sign on, warm lamp on, one last stretch, zero clients."},
+    {id:"harbor",title:"Lantern Harbor",label:"wanderer",desc:"Lanterns drifting. You finally exhale."}
+  ]},
+  {key:"role",title:"Choose your alter ego.",subtitle:"Because even off-duty, you accidentally main character.",options:[
+    {id:"architect",title:"The Quiet Architect",label:"northbound",desc:"Builds safe worlds, one detail at a time."},
+    {id:"comet",title:"The Comet in Sneakers",label:"chaotic good",desc:"Fast, bright, slightly unhinged, lands on time anyway."},
+    {id:"guardian",title:"The Guardian of Lost Socks",label:"secret softness",desc:"Keeps everyone balanced. Even the mismatched."}
+  ]},
+  {key:"star",title:"Pick your North Star.",subtitle:"What do you quietly orbit this year?",options:[
+    {id:"steady",title:"Steady",label:"true north",desc:"Showing up. Even when no one’s looking."},
+    {id:"wild",title:"A Little Wild",label:"adventure",desc:"Saying yes to more than work & worry."},
+    {id:"soft",title:"Soft",label:"gentle",desc:"Letting yourself be held, too."}
+  ]}
+];
+
+const stepContainer=document.getElementById("step-container");
+const nextBtn=document.getElementById("next-btn");
+const subtitleEl=document.getElementById("subtitle");
+const stepIndicator=document.getElementById("step-indicator");
+const teaseEl=document.getElementById("tease");
+
+function renderStep(){
+  stepContainer.innerHTML=""; teaseEl.textContent="";
+  if(step===0){
+    subtitleEl.textContent="Tiny interactive constellation. Tap when you’re ready to play.";
+    stepIndicator.textContent=""; nextBtn.textContent="Start"; nextBtn.disabled=false; return;
+  }
+  if(step>=1&&step<=3){
+    const current=steps[step-1];
+    subtitleEl.textContent=current.subtitle;
+    stepIndicator.textContent=`Step ${step} of 3`;
+    const frag=document.createDocumentFragment();
+    const choicesDiv=document.createElement("div"); choicesDiv.className="choices";
+
+    for(const opt of current.options){
+      const btn=document.createElement("button"); btn.className="choice-btn"; btn.dataset.id=opt.id;
+      btn.innerHTML=`<div><span class="label">${opt.label}</span>${opt.title}<br/><small>${opt.desc}</small></div><div aria-hidden="true">✶</div>`;
+      btn.addEventListener("click",()=>{
+        const all=choicesDiv.querySelectorAll(".choice-btn");
+        for(const b of all) b.classList.remove("selected");
+        btn.classList.add("selected");
+        selections[current.key]=opt.id;
+        nextBtn.disabled=false;
+        if(TEASE_MODE){
+          teaseEl.textContent=step===1?"Bold opening choice. Respect.":step===2?"Noted. Pretending I’m surprised.":"Okay, this tracks for you.";
+        }
+      },{passive:true});
+      choicesDiv.appendChild(btn);
+    }
+    frag.appendChild(choicesDiv);
+    stepContainer.appendChild(frag);
+    nextBtn.textContent=step<3?"Next ➜":"Reveal ✧";
+    nextBtn.disabled=!selections[current.key];
+    return;
+  }
+  if(step===4){ showFinalMessage(); }
+}
+
+function showFinalMessage(){
+  stepContainer.innerHTML=""; nextBtn.style.display="none"; stepIndicator.textContent="";
+  subtitleEl.textContent="Here’s what your choices quietly spelled out.";
+
+  const settingText={
+    rooftop:"you like your magic slightly above ground level — close enough to real life to be practical, far enough to stay enchanted.",
+    studio:"your safest worlds are the ones you quietly build for others… even when the doors are closed.",
+    harbor:"you’re allowed to drift a little before you decide where to anchor. You still always find your way."
+  }[selections.setting]||"";
+  const roleText={
+    architect:"You are the one who notices the details no one credits, and that is where half the miracles live.",
+    comet:"You move fast, burn bright, and somehow still make people feel safer, not scorched.",
+    guardian:"You guard tiny things like form and socks and people’s spines, but it’s really their hearts you’re careful with."
+  }[selections.role]||"";
+  const starText={
+    steady:"Your North Star is consistency — the quiet kind that doesn’t ask to be seen yet is unmistakably there.",
+    wild:"Your North Star is permission — to color outside the lines you never actually agreed to.",
+    soft:"Your North Star is softness — trusting that letting people care for you doesn’t make you weaker; it makes you human."
+  }[selections.star]||"";
+
+  const msgDiv=document.createElement("div"); msgDiv.className="final-message";
+  msgDiv.innerHTML = [
+    `<p>${settingText}</p>`,
+    `<p>${roleText}</p>`,
+    `<p>${starText}</p>`,
+    `<p>Thank you for being a quiet kind of North Star — the kind that never asks to be seen, yet somehow keeps someone else steady anyway.</p>`,
+    `<p>If there’s ever been a map I trust without needing to read it twice, it’s the one your light drew.</p>`,
+    `<p><strong>Merry Christmas, ${HER_NAME}.</strong></p>`,
+    `<p>No grand speech. Just glad our orbits crossed.</p>`,
+    `<p style="margin-top:4px;">– ${FROM_NAME} (your quiet co-pilot in this odd little orbit)</p>`
+  ].join("");
+
+  const tag=document.createElement("div"); tag.className="tagline";
+  tag.textContent="P.S. Side quest complete. Bonus achievement unlocked: ‘Unintentional Heart Thief.’ (Don’t worry, it’s untradeable.)";
+  const tiny=document.createElement("div"); tiny.className="tiny";
+  tiny.textContent="This little world self-destructs in 3... 2... (just kidding, you can revisit any time.)";
+  msgDiv.appendChild(tag); msgDiv.appendChild(tiny);
+  stepContainer.appendChild(msgDiv);
+
+  // Trigger on-screen whisper if enabled
+  if (EASTER_EGG_WHISPER) {
+    setTimeout(secretWhisper, 1200);
+  }
+  // Console easter egg
+  if (EASTER_EGG_CONSOLE) {
+    revealConsoleEasterEgg();
+  }
+}
+
+nextBtn.addEventListener("click",()=>{
+  if(step>=1&&step<=3){ const current=steps[step-1]; if(!selections[current.key]) return; }
+  step++; renderStep();
+},{passive:true});
+
+renderStep();
+
+/*** ===== STARFIELD (performance-safe) ===== ***/
+const canvas=document.getElementById("stars-canvas");
+const ctx=canvas.getContext("2d",{alpha:true, desynchronized:true});
+let stars=[], rafId=null, running=false, reducedMotion=false, paused=false;
+let lastTime=0, frameInterval=1000/TARGET_FPS;
+
+// reduce work until first interaction (helps Instagram in-app browser)
+let started=false;
+function startEverything(){
+  if(started) return;
+  started=true;
+  // honor system setting
+  reducedMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  resizeCanvas();
+  if(!reducedMotion && !paused){ startRAF(); }
+}
+document.addEventListener("pointerdown", startEverything, {once:true, passive:true});
+document.addEventListener("keydown", startEverything, {once:true, passive:true});
+
+// controls
+const motionBtn=document.getElementById("toggle-motion");
+const pauseBtn=document.getElementById("pause-bg");
+motionBtn.addEventListener("click",()=>{
+  reducedMotion=!reducedMotion;
+  motionBtn.setAttribute("aria-pressed", String(reducedMotion));
+  if(reducedMotion){ stopRAF(); clearCanvas(); }
+  else if(started && !paused){ startRAF(); }
+},{passive:true});
+pauseBtn.addEventListener("click",()=>{
+  paused=!paused;
+  pauseBtn.setAttribute("aria-pressed", String(paused));
+  if(paused){ stopRAF(); }
+  else if(started && !reducedMotion){ startRAF(); }
+},{passive:true});
+
+// adapt to visibility
+document.addEventListener("visibilitychange",()=>{
+  if(document.hidden){ stopRAF(); }
+  else if(started && !reducedMotion && !paused){ startRAF(); }
+},{passive:true});
+
+// size helpers
+function resizeCanvas(){
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const w = Math.floor(window.innerWidth * dpr);
+  const h = Math.floor(window.innerHeight * dpr);
+  canvas.width=w; canvas.height=h;
+  canvas.style.width=window.innerWidth+"px";
+  canvas.style.height=window.innerHeight+"px";
+  createStars(w,h,dpr);
+}
+
+let resizeTimer=null;
+window.addEventListener("resize",()=>{
+  if(resizeTimer) cancelAnimationFrame(resizeTimer);
+  resizeTimer=requestAnimationFrame(()=>{ resizeCanvas(); });
+},{passive:true});
+
+// star factory with adaptive density
+function createStars(w,h,dpr){
+  const area = (w*h)/(dpr*dpr);
+  const mem = navigator.deviceMemory || 4;
+  const density = area / 12000 / (dpr>1.5 ? 1.6 : 1) / (mem<4 ? 1.5 : 1);
+  let count = Math.min(MAX_CANVAS_STARS, Math.max(40, Math.floor(density)));
+  if(reducedMotion) count = 0;
+
+  stars.length=0;
+  for(let i=0;i<count;i++){
+    stars.push({
+      x: Math.random()*w,
+      y: Math.random()*h,
+      r: Math.random()*0.9 + 0.3,
+      alpha: Math.random()*0.9 + 0.1,
+      twinkle: 0.004 + Math.random()*0.008
+    });
+  }
+}
+
+function clearCanvas(){ ctx.clearRect(0,0,canvas.width,canvas.height); }
+
+function draw(now){
+  if(!running) return;
+  if(!lastTime) lastTime=now;
+  const delta = now - lastTime;
+  if(delta >= frameInterval){
+    lastTime = now - (delta % frameInterval);
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    for(let i=0;i<stars.length;i++){
+      const s=stars[i];
+      s.alpha += (Math.random()-0.5) * s.twinkle;
+      if(s.alpha<0.08) s.alpha=0.08;
+      if(s.alpha>1) s.alpha=1;
+
+      ctx.globalAlpha = s.alpha;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, s.r, 0, Math.PI*2);
+      ctx.fillStyle = "#f9fafb";
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+  rafId=requestAnimationFrame(draw);
+}
+
+function startRAF(){
+  if(running) return;
+  running=true;
+  lastTime=0;
+  rafId=requestAnimationFrame(draw);
+}
+function stopRAF(){
+  running=false;
+  if(rafId){ cancelAnimationFrame(rafId); rafId=null; }
+}
+
+/*** Kick off immediately for desktop (optional). Mobile waits for tap. ***/
+if(!/Instagram|FBAN|FBAV/i.test(navigator.userAgent)){
+  if('requestIdleCallback' in window){
+    requestIdleCallback(()=>startEverything(), {timeout: 500});
+  } else {
+    setTimeout(()=>startEverything(), 200);
+  }
+}
+
+/*** ===== EASTER EGGS ===== ***/
+// 1) Console-encoded message (Base64 UTF-8)
+function revealConsoleEasterEgg(){
+  try{
+    const b64 = "eW91IGFyZSB0aGUgZGVmaW5pdGlvbiBvZiBzb21lb25l4oCZcyBsaWdodG5pbmch"; // "you are the definition of someone’s lightning!"
+    const bin = atob(b64);
+    const bytes = Uint8Array.from(bin, c=>c.charCodeAt(0));
+    const msg = (window.TextDecoder ? new TextDecoder().decode(bytes) : bin);
+    console.log("%c✨ Secret constellation decoded:","color:#fb923c;font-weight:bold;");
+    console.log(msg);
+  }catch(e){}
+}
+
+// 2) On-screen whisper (appears softly after the ending)
+function secretWhisper(){
+  const div = document.createElement("div");
+  div.style.cssText =
+    "position:fixed;bottom:12px;left:50%;transform:translateX(-50%);"+
+    "font-size:.65rem;color:#f97316;opacity:0;transition:opacity 2s ease;"+
+    "pointer-events:none;z-index:4;";
+  div.textContent = "you are the definition of someone’s lightning!";
+  document.body.appendChild(div);
+  requestAnimationFrame(()=>{ div.style.opacity="0.75"; });
+  setTimeout(()=>{ div.style.opacity="0"; }, 8000);
+  setTimeout(()=>{ div.remove(); }, 10000);
+}
+</script>
+</body>
+</html>
